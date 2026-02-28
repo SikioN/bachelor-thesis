@@ -1,0 +1,210 @@
+%% Файл: itmo-robotics-vkr.sty
+%% Назначение: Обеспечение соответствия ВКР стандартам ГОСТ (Р 7.0.11-2011, 7.32-2017, Р 7.0.100-2018)
+%%             и предоставление математического аппарата для робототехники и топологии.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{vkr}
+
+% ==============================================================================
+% ЧАСТЬ 1: ТИПОГРАФИКА И ГОСТ
+% ==============================================================================
+
+% --- 1.1. Поддержка языка, кодировок и шрифтов ---
+\RequirePackage{cmap} % Поиск и копирование русского текста из PDF
+\RequirePackage[T2A,T1]{fontenc} % Внутренняя кодировка шрифтов
+\RequirePackage[utf8]{inputenc} % Кодировка исходного текста
+\RequirePackage[english, russian]{babel} % Локализация и переносы
+\RequirePackage{csquotes} % Рекомендуется для biblatex и babel
+
+% Шрифты, максимально приближенные к Times New Roman (для pdflatex)
+\RequirePackage{tempora}
+\RequirePackage{newtxmath} % Математический шрифт, совместимый с Times
+
+% --- 1.2. Геометрия страницы (Поля по ГОСТ) ---
+% Левое поле 27 мм, правое 15 мм, верхнее и нижнее 20 мм.
+\RequirePackage[a4paper, left=2.7cm, right=1.5cm, top=2cm, bottom=2cm]{geometry}
+
+% --- 1.3. Интервалы и абзацы ---
+\RequirePackage{setspace}
+\onehalfspacing % Полуторный межстрочный интервал по ГОСТ
+\setlength{\parindent}{1.25cm} % Абзацный отступ ровно 1.25 см
+
+% Запрет висячих строк (вдов и сирот), что критично проверяется нормоконтролем
+\clubpenalty=10000
+\widowpenalty=10000
+
+% --- 1.4. Настройка заголовков (titlesec) ---
+\RequirePackage{titlesec}
+
+% Раздел (Глава) ВКР. ГОСТ требует: с абзацного отступа, заглавными буквами, без точки в конце.
+% В ИТМО часто допускается выравнивание по центру для Глав.
+\titleformat{\chapter}[block]
+  {\normalfont\Large\bfseries\centering} % Шрифт и выравнивание
+  {\thechapter}{1em}{\MakeUppercase} % Номер главы, отступ, все заглавные
+
+% Для неномерных глав (Введение, Заключение, Оглавление)
+\titleformat{name=\chapter,numberless}[block]
+  {\normalfont\Large\bfseries\centering}
+  {}{0pt}{\MakeUppercase}
+
+\titlespacing*{\chapter}{0pt}{-30pt}{20pt} % Отступы до и после заголовка
+\titlespacing*{name=\chapter,numberless}{0pt}{-30pt}{20pt}
+
+% Подраздел (Секция). С абзацного отступа, строчными буквами, без точки.
+\titleformat{\section}[block]
+  {\normalfont\large\bfseries\hspace{1.25cm}} % Смещение на величину абзацного отступа
+  {\thesection}{1ex}{}
+
+% --- 1.5. Оглавление (tocloft) ---
+\RequirePackage[titles]{tocloft}
+\renewcommand{\cftchapleader}{\cftdotfill{\cftdotsep}} % Точки для глав в оглавлении
+
+% --- 1.6. Библиография (ГОСТ Р 7.0.100-2018) ---
+% Используем biblatex с движком biber для полной поддержки нового ГОСТ.
+\RequirePackage[
+    backend=biber,
+    bibstyle=gost-numeric,
+    citestyle=gost-numeric,
+    language=auto,
+    autolang=other,
+    sorting=ntvy % Сортировка: имя, название, том, год (автоматически ставит русские источники первыми)
+]{biblatex}
+
+% --- 1.7. Оформление таблиц и графики ---
+\RequirePackage{graphicx}
+\RequirePackage{float} % Жесткое позиционирование [H]
+\RequirePackage[labelsep=endash]{caption} % Разделитель тире в подписях рисунков (Рис. 1 - Название)
+\captionsetup[table]{justification=raggedright, singlelinecheck=false} % Таблицы подписываются слева
+
+% --- 1.8. Гиперссылки и кликабельность ---
+\RequirePackage[colorlinks=true, allcolors=black, pdfborder={0 0 0}]{hyperref}
+
+% ==============================================================================
+% ЧАСТЬ 2: МАТЕМАТИЧЕСКИЙ АППАРАТ И TIKZ (РОБОТОТЕХНИКА)
+% ==============================================================================
+
+% --- 2.1. Базовые математические пакеты ---
+\RequirePackage{amsmath}
+\let\Bbbk\relax
+\RequirePackage{amssymb}
+\RequirePackage{mathtools} % Предоставляет расширенные стрелки и инструменты форматирования
+\RequirePackage{esint} % Специализированные интегралы (контурные и т.д.)
+\RequirePackage{etoolbox} % Современный аналог xifthen
+
+% --- 2.2. Внедрение файлов ---
+\RequirePackage{import}
+\RequirePackage{transparent}
+\RequirePackage{pdfpages}
+\RequirePackage{subcaption} % Замена устаревшему subfigure
+
+% --- 2.3. Настройка TikZ и PGFPlots ---
+\RequirePackage{tikz}
+\RequirePackage{tikz-cd}
+\RequirePackage{pgfplots}
+\RequirePackage{tikz-3dplot}
+\pgfplotsset{compat=1.18} % Обязательное указание версии для стабильности PGFPlots
+
+% Загрузка библиотек TikZ
+\usetikzlibrary{patterns, 3d, arrows.meta, decorations.markings, perspective}
+
+% Оптимизация путей и сложных пересечений
+\makeatletter 
+\tikzset{ 
+    reuse path/.code={\pgfsyssoftpath@setcurrentpath{#1}} 
+} 
+\tikzset{even odd clip/.code={\pgfseteorule}, 
+    protect/.code={ 
+    \clip[overlay,even odd clip,reuse path=#1] 
+    (current bounding box.south west) rectangle (current bounding box.north east); 
+}} 
+\makeatother 
+
+% Пользовательские стили стрелок для графов и вложений
+\tikzset{->-/.style={decoration={
+  markings,
+  mark=at position #1 with {\arrow{>}}},postaction={decorate}},
+  ->-/.default=0.55}
+
+\tikzset{
+    closed hook arrow/.style={
+        {Hooks[harpoon, length=1mm]}->, 
+        decoration={markings, mark=at position 0.5 with {\draw[-] (-0.2em, 0.2em) -- (0.2em, -0.2em);}},
+        postaction={decorate},
+    },
+    open hook arrow/.style={
+        {Hooks[harpoon, length=1mm]}->, 
+        decoration={markings, mark=at position 0.5 with {\draw[fill=white, draw=black] (0em, -0.05em) circle (0.15em);}},
+        postaction={decorate},
+    }
+}
+
+% --- 2.4. Топологические макросы для конфигурационных пространств ---
+\newcommand{\X}{\mathbf{X}}
+\newcommand{\topX}{\left(\X,\, \mathbf{\Omega_{\X}}\right)}
+\newcommand{\Y}{\mathbf{Y}}
+\newcommand{\topY}{\left(\Y,\, \mathbf{\Omega_{\Y}}\right)}
+\newcommand{\Z}{\mathbf{Z}}
+\newcommand{\topZ}{\left(\Z,\, \mathbf{\Omega_{\Z}}\right)}
+
+% Переопределение кванторов на более эстетичные версии
+\let\oldforall\forall
+\renewcommand{\forall}{\oldforall \, }
+\let\oldexist\exists
+\renewcommand{\exists}{\oldexist \: }
+
+% Переопределение функций действительной и мнимой части
+\renewcommand{\Im}{\mathrm{Im}}
+\renewcommand{\Re}{\mathrm{Re}}
+
+% Операторы
+\newcommand*{\defeq}{\stackrel{\text{def}}{=}}
+\DeclareMathOperator{\Der}{Der}
+\newcommand{\st}{\; : \;}
+
+% Топологические замыкания и границы
+\newcommand{\cl}[1]{\mathrm{Cl}\left(#1\right)}
+\newcommand{\fr}[1]{\mathrm{Fr}\left(#1\right)}
+\newcommand{\homeo}{\overset{\text{\tiny homeo}}{\cong}}
+
+% Проекция
+\newcommand{\pr}[2]{\mathrm{pr}_{#1}(#2)}
+
+% Кастомные знаки разности множеств (графические)
+\newcommand{\mysetminusD}{\hbox{\tikz{\draw[line width=0.6pt,line cap=round] (3pt,0) -- (0,6pt);}}}
+\newcommand{\mysetminusT}{\mysetminusD}
+\newcommand{\mysetminusS}{\hbox{\tikz{\draw[line width=0.45pt,line cap=round] (2pt,0) -- (0,4pt);}}}
+\newcommand{\mysetminusSS}{\hbox{\tikz{\draw[line width=0.4pt,line cap=round] (1.5pt,0) -- (0,3pt);}}}
+\renewcommand{\setminus}{\mathbin{\mathchoice{\mysetminusD}{\mysetminusT}{\mysetminusS}{\mysetminusSS}}}
+
+% Графические макросы для открытых/закрытых множеств
+\newcommand*{\open}{\raisebox{-0.75ex}{\begin{tikzpicture}
+        \draw (0,0) node {$\subset$};
+        \draw (0.1em, -0.575ex) circle (0.125em);
+\end{tikzpicture}}}
+\newcommand*{\closed}{\raisebox{-0.75ex}{\begin{tikzpicture}
+            \draw (0,0) node {$\subset$};
+            \draw[thick] (0.1em, -0.35ex) -- (0.3em, -0.85ex);
+\end{tikzpicture}}}
+
+% --- 2.5. Утилиты для вставки графики ---
+\newcommand{\incfig}[2][1]{%
+    \def\svgwidth{#1\columnwidth}
+    \import{./figures/}{#2.pdf_tex} % Ожидает наличие папки figures
+}
+
+\newcommand{\image}[2]{
+    \begin{figure}[H]
+        \centering
+        \incfig[0.8]{#1}
+        \caption{#2}
+        \label{fig:#1}
+    \end{figure}
+}
+
+% --- 2.6. Декоративные секции (опционально, не для основного текста ГОСТ) ---
+\newcommand{\starsection}[1]{%
+    \renewcommand{\thesubsection}{\Large \textcircled{\centering \small{\ding{72}}}}%
+    \subsection{#1}%
+    \renewcommand{\thesubsection}{\arabic{chapter}.\arabic{section}.\arabic{subsection}}%
+}
+
+\endinput

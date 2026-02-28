@@ -1,0 +1,47 @@
+\documentclass[a4paper, 14pt]{extreport}
+
+% Подключение основного стиля (указан файл vkr.sty)
+\usepackage{vkr}
+
+% Подключение базы библиографии
+\addbibresource{references.bib}
+
+\begin{document}
+
+% Титульный лист (заглушка)
+\begin{titlepage}
+    \begin{center}
+        \vspace*{4cm}
+        \LARGE
+        \textbf{ВЫПУСКНАЯ КВАЛИФИКАЦИОННАЯ РАБОТА}
+        \vspace{2cm}
+        
+        \large
+        Выполнил: Муравья Никита \\
+        Руководитель: Бойцев Антон Александрович
+    \end{center}
+\end{titlepage}
+
+% Оглавление
+\tableofcontents
+\clearpage
+
+% Введение
+\include{chapters/introduction}
+
+% Основная часть (Главы 1, 2, 3)
+\include{chapters/chapter1}
+\include{chapters/chapter2}
+\include{chapters/chapter3}
+
+% Заключение
+\include{chapters/conclusion}
+
+% Список использованной литературы
+\clearpage
+\printbibliography[heading=bibintoc, title={Список использованной литературы}]
+
+% Приложения
+\include{chapters/appendix}
+
+\end{document}

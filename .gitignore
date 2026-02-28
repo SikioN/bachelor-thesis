@@ -1,0 +1,21 @@
+# User files to ignore
+task.txt
+Отчет НИР.txt
+Отчет НИР_utf8.txt
+
+# LaTeX auxiliary files
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.pdf
+*.run.xml
+*.synctex.gz
+*.toc
+# System generated
+par-*
+.DS_Store
