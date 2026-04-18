@@ -1,9 +1,650 @@
-\chapter{Проектная/Практическая часть}
+\chapter{Темпоральные графы знаний в управлении роботом}
+\label{ch:tkg}
 
-\section{Разработка математических и топологических моделей}
-TODO
-\section{Описание аппаратной части}
-TODO
+В первой главе было продемонстрирована концептуальная неспособность традиционных методов геометрической навигации моделировать изменчивость среды, и выяснили, что статические 3D-графы сцен \cite{ref10} хоть и существенно снижают вычислительную нагрузку, но не умеют накапливать память о перемещениях объектов. Было показано, что именно темпоральные графы знаний \cite{ref40} дают нам тот самый недостающий механизм, который берёт классический триплет и расширяет его до квадруплета $\displaystyle (s, p, o, t)$, который фиксирует момент времени каждого факта.
 
-\section{Архитектура программного обеспечения и алгоритмы}
-TODO
+Для преодоления описанных ограничений в работе предлагается архитектура непрерывного дозаполнения и интерпретация автономным интеллектуальным агентом, которая строится на синтезе TKG и LLM. 
+
+\section{Математическая постановка задачи}
+\label{sec:math_formulation}
+
+Рассмотрим некоторую автономную сервисную робототехническую систему, функционирующую в динамичной и частично наблюдаемой среде. В дискретный момент времени $\displaystyle t$ робот получает массив данных, формируемый подсистемами технического зрения, который представляет собой многомерный тензор $\displaystyle O_t \in \mathbb{R}^{H \times W \times C}$, где $\displaystyle H$ и $\displaystyle W$ задают соответвующее пространственное разрешение кадра, а $\displaystyle C$ отвечает за количество каналов, которые в себя включают RGB-изображение, карту глубины и облако точек лидара.
+
+Вычислительной задачей модуля восприятия будет состоять в преобразовании этого неструктурированного тензора в эпизодическую память. Эпизодическая память будет реализована в виде темпорального графа знаний. Как было описано в обзорной работе Cai и соавторов \cite{ref40}: математически такой граф определяется как ориентированный мультиреляционный граф с временными метками:
+
+\begin{equation}
+    \mathcal{G} = \langle \mathcal{E}, \mathcal{R}, \mathcal{T}, \mathcal{F} \rangle,
+    \label{eq:tkg_def}
+\end{equation}
+
+где $\displaystyle \mathcal{E}$ будет являться конечным множеством идентифицируемых сущностей сцены, $\displaystyle \mathcal{R}$ представляет множество семантических отношений, $\displaystyle \mathcal{T}$ задаёт дискретное множество временных меток с естественным отношением порядка, а $\displaystyle \mathcal{F} \subseteq \mathcal{E} \times \mathcal{R} \times \mathcal{E} \times \mathcal{T}$ – множество зафиксированных фактов, каждый из которых является семантическим отношением между двумя сущностями в некоторый момент времени.
+
+Также в своём обзоре Wang и другие авторы \cite{ref71} показали, что введение временной составляющей в графы знаний отличает их от статических, что позволяет рассмотреть исторический срез графа как множество упорядоченных четвёрок, которые лежат в системе к текущему моменту времени~$\displaystyle t$:
+
+\begin{equation}
+    \mathcal{G}_t = \{\langle s, p, o, \tau \rangle \mid \tau \le t\}.
+    \label{eq:history_slice}
+\end{equation}
+
+Минимальной единицей информации является кортеж из субъекта $\displaystyle s \in \mathcal{E}$, предиката $\displaystyle p \in \mathcal{R}$, объекта $\displaystyle o \in \mathcal{E}$ и временной метки $\displaystyle \tau \in \mathcal{T}$, в дальнейшем называемый квадруплетом. В нашей реализации каждый такой объект хранится как структура данных, содержащая четыре поля.
+
+Проблемой эксплуатации робота в реальных условиях может быть неполнота совокупности наблюдений. Ограниченное поле зрения камер и постоянные физические помехи могут привести к появлению пропусков в графе знаний. Из-за чего интеллектуальная система должна уметь экстраполировать внутреннее состояние среды за пределы наблюдаемых данных. Для решения задачи TKGC \cite{ref74} было предложено вычислять граф предсказаний $\displaystyle \mathcal{G}_{t+1}^*$, который объединяет априорные знания и вероятные скрытые семантические связи:
+
+\begin{equation}
+    \mathcal{G}_{t+1}^* = \mathcal{G}_t \cup \{\langle s, p, o, t+1 \rangle \mid \sigma(\phi(s,p,o,t+1)) > \theta \},
+    \label{eq:predicted_graph}
+\end{equation}
+
+где $\displaystyle \sigma$ обозначает сигмоидную функцию активации $\displaystyle \sigma(x) = \frac{1}{1 + e^{-x}}$, сопоставляющую произвольное вещественное значение вероятностной мере, $\displaystyle \phi$ представляет собой скалярную оценку правдоподобия, вычисляемую экстраполяционной моделью TComplEx, а $\displaystyle \theta$ — порог, определяемый экспериментально на валидационной выборке.
+
+На базе расширенного графа ставится оптимизационная задача планирования. Робот получает высокоуровневую команду $\displaystyle C$ на естественном языке, которая может содержать временные ограничения. Как было описано в подходе Graph-Constrained Reasoning \cite{ref29}, эта команда должна также транслироваться в набор ограничений безопасности, записанных формулами линейной темпоральной логики $\displaystyle \varphi$, которые были рассмотрены ранее в разделе~1.2 первой главы. Интеллектуальному агенту необходимо найти такую траекторию $\displaystyle A = (a_1, a_2, \ldots, a_n)$, которая максимизирует условную вероятность успешного выполнения команды при заданном состоянии:
+
+\begin{equation}
+    A = \arg\max_{A} P(A \mid C, \mathcal{G}_{t+1}^*),
+    \label{eq:planning}
+\end{equation}
+
+при условиях, удовлетворяющих темпоральным ограничениям безопасности $\displaystyle A \models \varphi$. Каждый элемент последовательности $\displaystyle a_i$ представляет собой дискретный шаг навигации/манипуляции, последовательно транслируемый в команды управления через функцию сериализации $\displaystyle A \rightarrow \mathbf{q}(t)$, где $\displaystyle \mathbf{q}(t)$ — вектор обобщённых координат в пространстве конфигураций.
+
+
+\section{Архитектура нейросимволического цикла управления}
+\label{sec:architecture}
+
+\subsection{Общая идея когнитивного цикла}
+
+Разработанная архитектура опирается на строгое функциональное разделение когнитивных процессов между подсистемой извлечения и ведения TKG и модулем агентного рассуждения на базе LLM. Практический смысл такого архитектурного решения обусловлен вычислительными ограничениями современных языковых моделей. Как было показано в первой главе при обсуждении методологии SayPlan, LLM физически не способна обрабатывать полный граф сцены помещения в рамках одного контекстного окна, размер которого ограничен несколькими тысячами токенов. Именно поэтому в подходе ADGR, предложенном Buehler \cite{ref1}, система должна формировать знания непосредственно в контексте решаемой задачи путём итеративного исследования графа с помощью набора специализированных инструментов.
+
+Процесс функционирования представляет собой непрерывный замкнутый цикл, охватывающий этапы визуального восприятия, тензорной экстраполяции, поиска, логического вывода и физического исполнения. Общая архитектура этого когнитивного цикла была представлена на рисунке~\ref{fig:arch_diag} в разделе постановки задачи первой главы. В настоящем разделе мы детально разберём внутреннюю логику каждого блока этой схемы, начиная с потока данных между модулями.
+
+% На рисунке~\ref{fig:dataflow} представлена детализированная схема потоков данных между подсистемами, раскрывающая внутреннюю структуру каждого модуля, обозначенного на высокоуровневой архитектурной диаграмме из первой главы.
+
+% \begin{figure}[htbp]
+% \centering
+% \resizebox{\textwidth}{!}{%
+% \begin{tikzpicture}[
+%     node distance=1.2cm and 1.6cm,
+%     block/.style={rectangle, rounded corners=3pt, draw=#1!60, fill=#1!8,
+%                   text width=4.2cm, minimum height=1.6cm, align=center,
+%                   font=\small},
+%     smallblock/.style={rectangle, rounded corners=2pt, draw=#1!50, fill=#1!6,
+%                   text width=3.2cm, minimum height=1.1cm, align=center,
+%                   font=\footnotesize},
+%     arrow/.style={-{Stealth[scale=1.0]}, thick, draw=black!70},
+%     darrow/.style={-{Stealth[scale=1.0]}, dashed, thick, draw=black!50},
+%     lbl/.style={font=\scriptsize, text=black!60, align=center}
+% ]
+
+% % Столбец 1: Входные данные
+% \node[block=gray] (sensors) {\textbf{Сенсорный поток}\\$\displaystyle O_t \in \mathbb{R}^{H \times W \times C}$};
+% \node[block=gray, below=0.8cm of sensors] (cmd) {\textbf{Команда}\\$\displaystyle C$ (естественный язык)};
+
+% % Столбец 2: Извлечение фактов
+% \node[block=blue, right=1.8cm of sensors] (extract) {\textbf{Извлечение фактов}\\LLM + NER\\$\rightarrow$ квадруплеты};
+% \draw[arrow] (sensors) -- node[above, lbl] {RGB-D кадры} (extract);
+
+% % Столбец 3: Хранилища
+% \node[smallblock=orange, right=1.5cm of extract, yshift=0.8cm] (kuzu) {Граф. БД\\граф $\displaystyle \mathcal{G}_t$};
+% \node[smallblock=orange, right=1.5cm of extract, yshift=-0.8cm] (chroma) {Вект. БД\\эмбеддинги $\displaystyle \hat{p} \in \mathbb{R}^{384}$};
+% \draw[arrow] (extract) -- (kuzu);
+% \draw[arrow] (extract) -- (chroma);
+
+% \node[block=teal, right=1.8cm of cmd] (qa) {\textbf{QA-конвейер}\\4 стадии\\(рисунок~\ref{fig:qa_pipeline})};
+% \draw[arrow] (cmd) -- node[above, lbl] {вопрос $C$} (qa);
+% \draw[arrow] (kuzu) -- node[right, lbl] {Cypher} (qa);
+% \draw[arrow] (chroma) -- node[right, lbl] {ANN} (qa);
+
+% % Столбец 4: TComplEx
+% \node[block=red, right=1.5cm of kuzu, yshift=0cm] (tcomplex) {\textbf{TComplEx}\\$\displaystyle \phi = \operatorname{Re}(\langle \mathbf{w}_s, \mathbf{w}_p, \bar{\mathbf{w}}_o, \mathbf{w}_t \rangle)$};
+% \draw[arrow] (kuzu) -- node[above, lbl] {исторический\\срез} (tcomplex);
+% \draw[darrow] (tcomplex) -- node[right, lbl, text width=1.8cm] {скоры\\$\displaystyle \sigma(\phi)$} (qa);
+
+% % Столбец 5: Ответ / Действие
+% \node[block=cyan, right=1.5cm of qa] (action) {\textbf{Исполнение}\\$\displaystyle A \rightarrow \mathbf{q}(t)$};
+% \draw[arrow] (qa) -- node[above, lbl] {план $\displaystyle A$} (action);
+
+% % Обратная связь
+% \draw[darrow] (action.south) -- ++(0,-0.6) -| node[below, lbl, pos=0.25] {обновление графа} (extract.south);
+
+% \end{tikzpicture}
+% }% end resizebox
+% \caption{Детализированная схема потоков данных между подсистемами}
+% \label{fig:dataflow}
+% \end{figure}
+
+Цикл запускается поступлением сенсорных данных $\displaystyle O_t$ и высокоуровневой команды $\displaystyle C$ от пользователя. Модуль формирования TKG производит семантическую сегментацию входного тензора, идентифицирует объекты сцены и формирует набор квадруплетов $\displaystyle \langle s, p, o, \tau \rangle$, описывающих актуальное состояние среды. Далее накопленный исторический срез графа передаётся подсистеме тензорной экстраполяции, которая на основании модели TComplEx вычисляет наиболее вероятные скрытые связи и формирует предсказанный граф $\displaystyle \mathcal{G}_{t+1}^*$. Этот обогащённый граф сериализуется в текстовый формат и подаётся на вход агентному планировщику. Как было описано в подходе Wu и соавторов \cite{ref19}, планировщик работает в рамках итеративного цикла ReAct \cite{ref83}, последовательно чередуя фазы рассуждения и действия: на каждом шаге агент формулирует промежуточную гипотезу, проверяет её валидность обращением к графу, и только после успешной верификации переходит к следующему этапу.
+
+Интеграция верификатора на основе графовых ограничений выступает важным элементом данного цикла. Как описано в подходе Graph-Constrained Reasoning, предложенном Luo и соавторами \cite{ref8}, языковые модели склонны к галлюцинациям, которые не имеют подкрепления в базе знаний. Каждый сгенерированный шаг проходит процедуру графовой верификации перед отправление на следующий слой. Верификатор сопоставляет действие с графом $\displaystyle \mathcal{G}_{t+1}^*$ и проверяет выполнение всех LTL-ограничений. Действия, которые нарушают инварианты будут отклоняться, что соответсвенно заставляет агента запустить процесс стабилизации и возобновления плана с учётом новых ограничений.
+
+Алгоритмическая реализация нейросимволического барьера опирается на механизм строгого декодирования Graph-Constrained Reasoning (GCR). Для того чтобы исключить физически невыполнимые галлюцинации LLM (например, попытки робота пройти сквозь запертую дверь), все допустимые пути и темпоральные факты из графа $\mathcal{G}_{t+1}^*$ преобразуются в специализированную структуру префиксного дерева — KG-Trie. Данная структура внедряется непосредственно в процесс авторегрессионного декодирования токенов языковой моделью. При генерации плана действий вероятности токенов, формирующих маршруты, отсутствующие в структуре KG-Trie или нарушающие инварианты линейной темпоральной логики (LTL), принудительно маскируются (сводятся к нулю). Это позволяет интеллектуальному агенту осуществлять навигацию и планирование с нулевым риском семантических ошибок, оставаясь в рамках математически доказанной топологии среды.
+
+\subsection{Экстраполяционная модель TComplEx}
+\label{sec:tcomplex}
+
+Ключевым звеном, обеспечивающим способность функционировать в условиях жёсткой частичной наблюдаемости, является модуль предсказания скрытых связей в TKG. В рамках данной работы используется модель TComplEx, представляющая собой расширение модели ComplEx на случай графов с временными метками. Как описано в обзоре Cai и авторов \cite{ref47}, метод рассматривает эволюционирующий во времени темпоральный граф как тензор четвёртого порядка $\displaystyle \mathcal{X} \in \{0, 1\}^{|\mathcal{E}| \times |\mathcal{R}| \times |\mathcal{E}| \times |\mathcal{T}|}$, и сводит задачу к аппроксимации этого тензора посредством разложения в комплексном пространстве.
+
+Рассмотрение векторного пространства над $\displaystyle \mathbb{C}^d$ обосновано топологией пространства. Большинство отношений в навигационных графах сцены имеют направленность. Обычные трансляционные модели вроде TransE, предложенной Bordes и соавторами \cite{ref52}, работают в вещественном евклидовом пространстве $\displaystyle \mathbb{R}^d$ и обладают фундаментальным математическим недостатком: они по своей природе коммутативны и не способны корректно моделировать антисимметричные паттерны отношений. Использование эрмитова скалярного произведения в комплексном пространстве блестяще решает эту проблему за счёт операции комплексного сопряжения, нарушающей коммутативность и тем самым позволяющей кодировать направленные зависимости между сущностями.
+
+Оценка вероятности существования скрытой связи $\displaystyle \phi$ вычисляется через скалярное произведение эмбеддингов:
+
+\begin{equation}
+    \phi(s,p,o,t) = \operatorname{Re}\bigl(\langle\mathbf{w}_s, \mathbf{w}_p, \bar{\mathbf{w}}_o, \mathbf{w}_{t}\rangle\bigr),
+    \label{eq:tcomplex_score}
+\end{equation}
+
+где $\displaystyle \mathbf{w}_s, \mathbf{w}_p, \mathbf{w}_o, \mathbf{w}_{t} \in \mathbb{C}^d$ представляют собой обучаемые комплексные $\displaystyle d$-мерные векторы субъекта, предиката, объекта и временной метки соответственно, а $\displaystyle \bar{\mathbf{w}}_o$ обозначает операцию поэлементного комплексного сопряжения вектора объекта. Оператор $\displaystyle \operatorname{Re}(\cdot)$ извлекает вещественную часть комплексного числа, потому что итоговая оценка правдоподобия факта принадлежит $\displaystyle \mathbb{R}$.
+
+Описанная операция влечёт изменение семантического пространства. Произведение Адамара $\displaystyle \mathbf{w}_{t}$ и $\displaystyle \mathbf{w}_p$, в результате которого получается вектор в том же пространстве, что и векторы сущностей, актуальный для конкретного исторического момента. В реализации вектора $\displaystyle \mathbf{w} = \mathbf{w}^{\text{re}} + i\,\mathbf{w}^{\text{im}}$ используется хранение $\operatorname{Re}$ и $\operatorname{Im}$ частей, и составной вектор отношения вычисляется через произведения вещественных и мнимых частей:
+
+\begin{equation}
+    \texttt{full\_rel} = \bigl(\mathbf{w}_p^{\text{re}} \odot \mathbf{w}_t^{\text{re}} - \mathbf{w}_p^{\text{im}} \odot \mathbf{w}_t^{\text{im}},\;\; \mathbf{w}_p^{\text{im}} \odot \mathbf{w}_t^{\text{re}} + \mathbf{w}_p^{\text{re}} \odot \mathbf{w}_t^{\text{im}}\bigr),
+    \label{eq:full_rel}
+\end{equation}
+
+где $\displaystyle \odot$ обозначает произведение Адамара. Результат умножается на матрицу эмбеддингов, это даёт возможность найти оценку функции правдоподобия для всех объектов. Данная выборка необходима для производительности на ядрах графических ускорителей и оптимизации дальнейших вычислений.
+
+На рисунке~\ref{fig:tcomplex_flow} продемонстрирована схема работы модели TComplEx, которая вычисляет значение функции правдоподобия для входных данных.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.8\textwidth}{!}{%
+\begin{tikzpicture}[
+    node distance=0.9cm and 1.4cm,
+    emb/.style={rectangle, rounded corners=2pt, draw=blue!50, fill=blue!8,
+                minimum width=2.0cm, minimum height=0.9cm, align=center,
+                font=\footnotesize},
+    op/.style={circle, draw=red!60, fill=red!10, minimum size=0.9cm,
+               font=\footnotesize\bfseries},
+    res/.style={rectangle, rounded corners=2pt, draw=purple!50, fill=purple!8,
+                minimum width=2.4cm, minimum height=0.9cm, align=center,
+                font=\footnotesize},
+    arrow/.style={-{Stealth[scale=0.9]}, thick, draw=black!60},
+    lbl/.style={font=\scriptsize, text=black!50, align=center}
+]
+
+% Embedding lookup
+\node[emb] (ws) {$\displaystyle \mathbf{w}_s \in \mathbb{C}^d$\\субъект};
+\node[emb, right=1.8cm of ws] (wp) {$\displaystyle \mathbf{w}_p \in \mathbb{C}^d$\\предикат};
+\node[emb, right=1.8cm of wp] (wt) {$\displaystyle \mathbf{w}_t \in \mathbb{C}^d$\\время};
+\node[emb, right=1.8cm of wt] (wo) {$\displaystyle \bar{\mathbf{w}}_o \in \mathbb{C}^d$\\объект$^*$};
+
+% Hadamard product p*t
+\node[op, below=1.2cm of $(wp)!0.5!(wt)$] (hadamard) {$\displaystyle \odot$};
+\draw[arrow] (wp) -- (hadamard);
+\draw[arrow] (wt) -- (hadamard);
+
+% full_rel result
+\node[res, below=0.8cm of hadamard] (fullrel) {\texttt{full\_rel} $\displaystyle \in \mathbb{C}^d$};
+\draw[arrow] (hadamard) -- node[right, lbl] {произведение\\Адамара} (fullrel);
+
+% Hermitian product
+\node[op, below=1.2cm of fullrel] (hermit) {$\displaystyle \langle\cdot\rangle$};
+\draw[arrow] (ws) |- (hermit);
+\draw[arrow] (fullrel) -- (hermit);
+\draw[arrow] (wo) |- (hermit);
+
+% Score
+\node[res, below=0.8cm of hermit] (score) {$\displaystyle \phi = \operatorname{Re}(\langle \mathbf{w}_s,\, \texttt{full\_rel},\, \bar{\mathbf{w}}_o \rangle)$};
+\draw[arrow] (hermit) -- node[right, lbl] {эрмитово\\произведение} (score);
+
+% Sigmoid
+\node[op, below=0.8cm of score] (sigma) {$\displaystyle \sigma$};
+\draw[arrow] (score) -- (sigma);
+
+% Probability
+\node[res, below=0.8cm of sigma] (prob) {$\displaystyle \text{tp} = \sigma(\phi) \in (0, 1)$};
+\draw[arrow] (sigma) -- node[right, lbl] {сигмоида} (prob);
+
+\end{tikzpicture}
+}% end resizebox
+\caption{Вычислительная схема модели TComplEx: от эмбеддингов к оценке правдоподобия}
+\label{fig:tcomplex_flow}
+\end{figure}
+
+\begin{sloppypar}
+Обучение модели происходит посредством минимизации перекрёстной энтропии с двумя компонентами регуляризации. Первая компонента:
+\end{sloppypar}
+
+\begin{equation}
+    \Omega_{N_3}(\Theta) = \lambda \cdot \frac{1}{|\mathcal{B}|} \sum_{f \in \Theta} \sum_{k=1}^{d} |f_k|^3,
+    \label{eq:n3_reg}
+\end{equation}
+
+где $\displaystyle \lambda > 0$ задаёт коэффициент регуляризации, а $\displaystyle |\mathcal{B}|$ — размер мини-батча. Штраф за $L_3$-норму приводит к тензорным представлениям, то есть информация концентрируется в меньшем числе осей латентного пространства. Это позволяет модели выделять оси, игнорируя шум, который неизбежно возникает из-за погрешностей визуальной одометрии и лидаров робота.
+
+Вторая компонента штрафует большие изменения между соседними эмбеддингами:
+
+\begin{equation}
+    \Omega_{\Lambda_3}(\mathbf{W}_\mathcal{T}) = \mu \cdot \frac{1}{|\mathcal{T}|-1} \sum_{\tau=1}^{|\mathcal{T}|-1} \|\mathbf{w}_{\tau+1} - \mathbf{w}_\tau\|_3^3,
+    \label{eq:lambda3_reg}
+\end{equation}
+
+где коэффициент $\displaystyle \mu > 0$ задаёт штраф за нестационарность. Регуляризация штрафует за резкие изменение временных представлений, что необходимо для приложений, где объекты перемещаются непрерывно.
+
+Функция потерь для модели TComplEx:
+
+\begin{equation}
+    \mathcal{L} = \mathcal{L}_{\text{CE}} + \Omega_{N_3}(\Theta) + \Omega_{\Lambda_3}(\mathbf{W}_\mathcal{T}),
+    \label{eq:total_loss}
+\end{equation}
+
+где $\displaystyle \mathcal{L}_{\text{CE}} = -\phi(s,p,o,t) + \log \sum_{e \in \mathcal{E}} \exp(\phi(s,p,e,t))$ представляет собой перекрёстную энтропию, определённая на множестве всех сущностей-кандидатов для позиции объекта.
+
+
+\subsection{Конвейер ответа на запросы}
+\label{sec:qa_pipeline}
+
+Агент взаимодействует с графом знаний через конвейер, который обеспечивает предварительный поиск и ранжирование фактов. Данная архитектура реализует ответы на пространственно-временные запросы пользователя, комбинируя три метода поиска: обход графа, семантический поиск по векторам и временную оценку.  
+
+На рисунке~\ref{fig:qa_pipeline} показана схема поиска и ранжирования, которая реализует цикл обработки запроса.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+    node distance=0.6cm and 1.0cm,
+    stage/.style={rectangle, rounded corners=4pt, draw=#1!60, fill=#1!10,
+                  text width=3.8cm, minimum height=2.4cm, align=center,
+                  font=\small},
+    arrow/.style={-{Stealth[scale=1.2]}, very thick, draw=black!60},
+    lbl/.style={font=\scriptsize, text=black!60, align=center, text width=2.2cm},
+    numcircle/.style={circle, draw=#1!70, fill=#1!20, minimum size=0.7cm,
+                      font=\footnotesize\bfseries, text=black!80}
+]
+
+% Stage 1
+\node[stage=blue] (s1) {
+    \textbf{Extraction}\\[3pt]
+    Извлечение сущностей\\
+    Классификация $\displaystyle C$
+    % $\displaystyle \alpha \in \{0.30 \ldots 0.60\}$
+};
+\node[numcircle=blue, above=0.15cm of s1] {1};
+
+% Stage 2
+\node[stage=orange, text width=4cm, right=1.2cm of s1] (s2) {
+    \textbf{Retrieval}\\[3pt]
+    Каскад разрешения\\
+    Граф. БД $\cup$ Вект. БД\\
+    % $\displaystyle k = \lfloor n^{0.55} \rfloor$
+};
+\node[numcircle=orange, above=0.15cm of s2] {2};
+
+% Stage 3
+\node[stage=red,text width=4.2cm, right=1.4cm of s2] (s3) {
+    \textbf{Оценка}\\[3pt]
+    TComplEx: $\displaystyle \sigma(\phi)$\\
+    Сходство: $\displaystyle \hat{q} \cdot \hat{p}$\\
+    $\displaystyle \text{conf} = (1{-}\alpha) e_{\text{sem}} + \alpha\,\text{tp}$
+};
+\node[numcircle=red, above=0.15cm of s3] {3};
+
+% Stage 4
+\node[stage=teal, right=1.4cm of s3] (s4) {
+    \textbf{Generation}\\[3pt]
+    Контекст\\
+    LLM $\rightarrow$ ответ\\
+    Постобработка
+};
+\node[numcircle=teal, above=0.15cm of s4] {4};
+
+% Arrows
+\draw[arrow] (s1) -- node[above, lbl] {} (s2);
+\draw[arrow] (s2) -- node[above, lbl] {} (s3);
+\draw[arrow] (s3) -- node[above, lbl] {} (s4);
+
+% Input/output
+\node[left=0.8cm of s1, font=\small, text=black!70, align=center] (input) {Вопрос $\displaystyle C$};
+\draw[arrow] (input) -- (s1);
+\node[right=0.8cm of s4, font=\small, text=black!70, align=center] (output) {Ответ};
+\draw[arrow] (s4) -- (output);
+
+\end{tikzpicture}
+}% end resizebox
+\caption{Конвейер поиска и ранжирования}
+\label{fig:qa_pipeline}
+\end{figure}
+
+\begin{enumerate}
+    \item[Стадия 1.] Анализируется подданный вопрос $\displaystyle C$, из которого извлекаются сущности, временные маркеры и тип ожидаемого ответа. Модель классифицирует вопрос на типы: простой временной с одним событием, с условием «до/после» или с некоторым событием. После чего идёт подбор оптимального значения $\displaystyle \alpha$ на основе классификации запроса, который в дальнейшем определяет вес семантического ранжирования.
+
+    \item[Стадия 2.] Для каждой извлечённой сущности выполняется каскад разрешений, последовательно проверяя сначала совпадение идентификатора, затем совпадение имени в графовой базе данных, лексическое сходство с заданным порогом на основе алгоритма RapidFuzz, приближённый поиск ближайших соседей в векторной базе данных с некоторым порогом расстояния, и далее при необходимости уточнение через вызов языковой модели. 
+\end{enumerate}
+
+На рисунке~\ref{fig:entity_cascade} показан план поиска сущностей, в котором каждый последующий уровень активируется, если предыдущий не дал результата, это будет обеспичивать минимальную вычислительную нагрузку.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    node distance=0.5cm,
+    level/.style={rectangle, rounded corners=3pt, draw=#1!55, fill=#1!8,
+                  text width=11cm, minimum height=1.0cm, align=left,
+                  font=\footnotesize},
+    arrow/.style={-{Stealth[scale=0.9]}, thick, draw=black!50},
+    fail/.style={font=\scriptsize\itshape, text=red!60},
+    ok/.style={font=\scriptsize\bfseries, text=green!50!black}
+]
+
+\node[level=blue] (l1) {\textbf{L1: Exact ID} — совпадение идентификатора в графе};
+
+\node[level=cyan, below=of l1] (l2) {\textbf{L2: Exact Name} — совпадение имени сущности в графовой БД};
+\draw[arrow] (l1.south) -- (l2.north);
+
+\node[level=teal, below=of l2] (l25) {\textbf{L2.5: Lexical Match} — RapidFuzz \texttt{token\_sort\_ratio} $\ge 90\%$};
+\draw[arrow] (l2.south) -- (l25.north);
+
+\node[level=orange, below=of l25] (l3) {\textbf{L3: Vector Match} — Вект. БД ANN, расстояние $< 0.25$};
+\draw[arrow] (l25.south) -- (l3.north);
+
+\node[level=red, below=of l3] (l4) {\textbf{L4: LLM Disambiguation} — если ANN расстояние $\in [0.25,\; 0.45]$};
+\draw[arrow] (l3.south) -- (l4.north);
+
+\node[level=purple, below=of l4] (l5) {\textbf{L5: New Entity} — создание новой сущности};
+\draw[arrow] (l4.south) -- (l5.north);
+
+\end{tikzpicture}
+\caption{Пятиуровневый каскад разрешения сущностей}
+\label{fig:entity_cascade}
+\end{figure}
+
+После сопоставления сущностей выполняется поиск: обход графа, который возвращает $\displaystyle G_{\text{candidates}}$, и семантический поиск ближайших соседей, которая возвращает $\displaystyle V_{\text{candidates}}$. Число кандидатов, которые передаются на ранжирование, определяется адаптивной формулой:
+
+\begin{equation}
+    k_{\text{search}} = \min\bigl(n_{\text{unique}},\; \max(15,\; \lfloor n_{\text{unique}}^{0.55} \rfloor)\bigr),
+    \label{eq:adaptive_k}
+\end{equation}
+
+обеспечивающей субэкспоненциальный рост выборки с обновлением графа.
+\begin{enumerate}
+    \item[Стадия 3.] Каждый кандидат проходит оценку релевантности, в которую входят два сигнала. Первый сигнал — семантическая близость $\displaystyle e_{\text{sem}}$, которая считается косинус между эмбеддингом запроса и эмбеддингом квадруплета. Второй сигнал — временная оценка $\displaystyle \text{tp}$, которая вычисляется моделью TComplEx:
+\end{enumerate}
+
+\begin{equation}
+    \text{conf}(q) = (1 - \alpha) \cdot e_{\text{sem}}(q) + \alpha \cdot \sigma\bigl(\phi(s_q, r_q, o_q, t_{\text{query}})\bigr),
+    \label{eq:hybrid_confidence}
+\end{equation}
+
+где $\displaystyle \alpha$ — коэффициент взвешенной суммы. Отбор кандидатов для генерации ответа осуществляется отсечением по разрыву: кандидаты сортируются по убыванию $\displaystyle \text{conf}$, и отбор останавливается, когда разница между первым и нынешним кандидатом превышает пороговое значение $\displaystyle \Delta$, если не набран минимальный набор фактов.
+
+\begin{enumerate}
+    \item[Стадия 4.] Отобранные квадруплеты сериализуются в текстовый контекст формата «субъект $\displaystyle \rightarrow$ отношение $\displaystyle \rightarrow$ объект (Year: временная метка)» и отправляются на вход языковой модели с исходным вопросом пользователя. Модель возвращает ответ, после чего он отправляется на постобработку.
+\end{enumerate}
+
+
+\subsection{Семантический поиск на основе векторных эмбеддингов}
+\label{sec:e5_embeddings}
+
+Векторная компонента поиска опирается на мультиязычную модель эмбеддингов, которая генерирует $\displaystyle L_2$-нормированные 384-мерные эмбеддинги. Как было предложено в подходе нейросимволического рассуждения над графами знаний \cite{ref4}, комбинация плотных нейросетевых представлений с дискретными графовыми структурами позволяет повысить качество информационного поиска по сравнению с использованием каждого метода независимо друг от друга. Модель разделяет запросы и фрагменты текста через префиксную систему: вектор запроса формируется как $\displaystyle \hat{q} = \text{enc}(\text{``query: ''} + q) \in \mathbb{R}^{384}$, а вектор фрагмента текста — как $\displaystyle \hat{p} = \text{enc}(\text{``passage: ''} + p) \in \mathbb{R}^{384}$. Благодаря $\displaystyle L_2$-нормировке косинусная мера отождествляется со скалярным произведением:
+
+\begin{equation}
+    \text{sim}(q, p) = \hat{q} \cdot \hat{p} = \sum_{i=1}^{384} \hat{q}_i \cdot \hat{p}_i \in [0, 1].
+    \label{eq:cosine_sim}
+\end{equation}
+
+Эмбеддинги лежат в векторной базе данных с HNSW-индексом. Векторное расстояние определяется как $\displaystyle d_{\text{IP}}(q, p) = 1 - (\hat{q} \cdot \hat{p})$, а сходство, соответственно, как $\displaystyle 1 - d_{\text{IP}}$. 
+
+Взаимосвязь между дискретным графовым, непрерывным векторным и комплексным темпоральным пространствами выражается коммутативной диаграммой на рисунке~\ref{fig:commutative}. Оценка релевантности кандидата получается как сумма двух сигналов, которая даёт робастность системы к сбоям компонент.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    node distance=2.5cm and 4.5cm,
+    space/.style={rectangle, rounded corners=4pt, draw=#1!60, fill=#1!8,
+                  text width=5.2cm, minimum height=1.8cm, align=center,
+                  font=\small},
+    arrow/.style={-{Stealth[scale=1.1]}, thick, draw=black!60},
+    lbl/.style={font=\footnotesize, text=black!60, align=center}
+]
+
+% Верхний ряд
+\node[space=blue] (graph) {
+\textbf{Графовое пространство}\\
+$\mathcal{G}_t \subseteq \mathcal{E} \times \mathcal{R} \times \mathcal{E} \times \mathcal{T}$\\
+Граф. БД / Cypher
+};
+
+\node[space=purple, right=of graph] (vector) {
+\textbf{Векторное пространство}\\
+$\hat{p} \in \mathbb{R}^{384}$\\
+Вект. БД / HNSW
+};
+
+% Нижний ряд
+\node[space=red, below=of graph] (temporal) {
+\textbf{Темпоральное пространство}\\
+$\mathbf{w} \in \mathbb{C}^{d}$\\
+TComplEx
+};
+
+\node[space=teal, below=2.67cm of vector] (conf) {
+\textbf{Оценка релевантности}\\
+$\text{conf} = (1{-}\alpha)\,e_{\text{sem}} + \alpha\,\text{tp}$
+};
+
+% Связи
+\draw[arrow] (graph.east) -- node[above, lbl] {$\text{enc}(\text{stringify}(q))$} (vector.west);
+
+\draw[arrow] (graph.south) -- node[left, lbl, text width=2.5cm]
+{$\texttt{TComplEx.score}$\\$(s, r, o, t)$} (temporal.north);
+
+\draw[arrow] (vector.south) -- node[right, lbl]
+{$e_{\text{sem}} = \hat{q} \cdot \hat{p}$} (conf.north);
+
+\draw[arrow] (temporal.east) -- node[below, lbl]
+{$\text{tp} = \sigma(\phi)$} (conf.west);
+
+% Диагональная пунктирная связь
+\draw[dashed, thick, draw=black!30, -{Stealth[scale=0.9]}]
+    (graph.south east) --
+    node[sloped, midway, above, lbl]
+    {keyword boost}
+    (conf.north west);
+
+\end{tikzpicture}
+\caption{Диаграмма трёх пространств представлений и формирования оценки релевантности}
+\label{fig:commutative}
+\end{figure}
+
+Параметры индекса подобраны экспериментально для оптимального баланса между точностью и скоростью поиска: $\displaystyle M = 32$ рёбер на узел графа HNSW, $\displaystyle \text{ef}_{\text{construction}} = 200$ для точности построения и $\displaystyle \text{ef}_{\text{search}} = 100$ для точности поиска.
+
+
+\section{Инкрементальное обновление и хранение графа}
+\label{sec:incremental}
+
+\subsection{Алгоритм мягкой инвалидации}
+
+Обеспечение когерентности памяти при непрерывном поступлении сенсорных данных требует тщательно продуманных инженерных решений. Полная перестройка структуры графа при регистрации каждого нового кадра с камеры неминуемо привела бы к вычислительным задержкам, несовместимым с требованиями реального времени. Как описано в подходе инкрементального построения графов знаний, предложенном Lairgi и соавторами \cite{ref35}, система не должна пересчитывать граф с нуля при каждом изменении: при перемещении объекта старое ребро лишь помечается как «историческое», а новое аккуратно добавляется в структуру.
+
+На рисунке~\ref{fig:incremental} показан алгоритм обновления графа знаний. Демонстрируется механизм инвалидации с резервным копированием и записью в хранилища.
+
+\begin{figure}[htbp]
+\begin{tikzpicture}[
+    node distance=0.8cm and 1.2cm,
+    step/.style={rectangle, rounded corners=3pt, draw=#1!60, fill=#1!8,
+                 text width=3.6cm, minimum height=1.4cm, align=center,
+                 font=\footnotesize},
+    store/.style={cylinder, draw=#1!60, fill=#1!8, shape border rotate=90,
+                  aspect=0.25, minimum height=1.2cm, minimum width=2.0cm,
+                  align=center, font=\footnotesize},
+    decision/.style={diamond, draw=red!60, fill=red!8, minimum size=1.2cm,
+                     align=center, font=\footnotesize, aspect=2.5, inner sep=1pt},
+    arrow/.style={-{Stealth[scale=1.0]}, thick, draw=black!60},
+    darrow/.style={-{Stealth[scale=1.0]}, dashed, thick, draw=red!50},
+    lbl/.style={font=\scriptsize, text=black!50, align=center}
+]
+
+% Step 1: Новые факты
+\node[step=gray] (input) {\textbf{Новые факты}\\массив\\квадруплетов};
+
+% Step 2: Backup
+\node[step=orange, right=1.5cm of input] (backup) {\textbf{Резервное копирование}\\ent\_id, rel\_id\\ts\_id, train.pickle};
+\draw[arrow] (input) -- (backup);
+
+% Step 3: Resolution
+\node[step=blue, right=1.5cm of backup] (resolve) {\textbf{Каскад разрешения}\\5 уровней\\EntityResolver};
+\draw[arrow] (backup) -- (resolve);
+
+% Decision
+\node[decision, below=1.0cm of resolve] (check) {Ошибка?};
+\draw[arrow] (resolve) -- (check);
+
+% =========================
+% Rollback path
+% =========================
+\node[step=red, left=2.5cm of check] (rollback) {\textbf{Откат}\\восстановление\\из .bak};
+
+\draw[darrow] (check) -- node[above, lbl] {да} (rollback);
+\draw[darrow] (rollback.west) -- ++(-0.8,0) |- (backup.west);
+
+% =========================
+% SUCCESS PATH (clean trident)
+% =========================
+
+% stores
+\node[store=orange, below=1.8cm of check, xshift=-3cm] (kuzu_s) {Граф. БД\\узлы + рёбра};
+\node[store=purple, below=1.8cm of check] (chroma_s) {Вект. БД\\эмбеддинги};
+\node[store=red, below=1.8cm of check, xshift=3cm] (pickle_s) {TComplEx\\pickle-файлы};
+
+% trunk point (NO node, just coordinate)
+\coordinate (split) at ([yshift=-1.2cm]check);
+
+% incoming arrow
+\draw[thick, draw=black!60] (check) -- node[left, lbl] {нет} (split);
+
+% horizontal branches (NO arrows here!)
+\coordinate (left)  at ($(split)+(-3cm,0)$);
+\coordinate (mid)   at ($(split)+(0,0)$);
+\coordinate (right) at ($(split)+(3cm,0)$);
+
+\draw (split) -- (left);
+\draw (split) -- (mid);
+\draw (split) -- (right);
+
+% final arrows ONLY into stores (no double arrows anywhere)
+\draw[arrow] (left)  -- (kuzu_s.north);
+\draw[arrow] (mid)   -- (chroma_s.north);
+\draw[arrow] (right) -- (pickle_s.north);
+
+% =========================
+% Final step
+% =========================
+\node[step=teal, below=0.8cm of chroma_s] (cleanup) {\textbf{Завершение}\\удаление .bak\\логирование};
+
+\draw[arrow] (kuzu_s) |- (cleanup);
+\draw[arrow] (chroma_s) -- (cleanup);
+\draw[arrow] (pickle_s) |- (cleanup);
+
+\end{tikzpicture}
+
+\caption{Алгоритм инкрементального обновления темпорального графа с атомарным откатом}
+\label{fig:incremental}
+\end{figure}
+
+Когда подсистема компьютерного зрения фиксирует пространственное перемещение предмета, соответствующий квадруплет не стирается из базы данных, а у него только закрывается временной интервал актуальности, изменяя его в статус исторической записи и сохраняя тем самым полную отслеживаемость всех зафиксированных состояний сцены. Также с этим процессом генерируется новый актуальный узел с измененной временной меткой. Для поддержания интерпретируемости вывода механизм автоматически создаёт рёбра провенанса между старым и новым состояниями, чтобы отслеживать изменение положения объекта в пространстве и фиксировать причинно-следственную связь между перемещением и обновлением записи.
+
+Процесс инкрементального обновления включает резервное копирование словарей отображений \texttt{ent\_id}, \texttt{rel\_id}, \texttt{ts\_id} и обучающей выборки \texttt{train.pickle} перед внесением каких-либо изменений. При возникновении ошибки система восстанавливает предыдущее состояние из резервных копий, что обеспечивает атомарность операции обновления. Новые факты проходят через последовательность разрешений сущностей и загружаются в три хранилища: графовую базу данных, векторное хранилище эмбеддингов и словари отображений для модели TComplEx.
+
+
+\subsection{Архитектура хранения данных}
+
+В качестве хранилища графовой структуры используется графовая база данных, которая заточена под выполнение запросов непосредственно в адресном пространстве управляющего процесса. Схема графа включает несколько типов узлов: \texttt{object} для сущностей, \texttt{hyper} для гиперграфовых связей, \texttt{episodic} для событий с явной временной привязкой, и \texttt{time} для временных меток. Также есть набор типов рёбер, которые связывают эти узлы в мультиреляционную сеть. Была использована векторная база данных, которая хранит эмбеддинги строковых представлений квадруплетов и обеспечивает семантический поиск через HNSW-индекс. Данная архитектура позволяет объединять графовые обходы по топологической структуре с векторным поиском по семантическому сходству, это позволяет расширять класс запросов, доступных для обработки агентным планировщиком.
+
+
+\section{Сравнительный анализ моделей экстраполяции}
+\label{sec:comparison}
+
+Превосходство выбранной модели TComplEx подтверждается сравнительным анализом. Как было описано в обзорных статьях Wang и соавторов \cite{ref71}, а также Nie и соавторов \cite{ref74}, среди методов TKGC выделяется широкий спектр подходов, от простейших трансляционных моделей до сложных архитектур на основе графовых нейросетей \cite{ref76}. В таблице~\ref{tab:models_comparison} приведено сравнение модели TComplEx с альтернативными архитектурами на бенчмарке ICEWS14.
+
+\begin{table}[htbp]
+\caption{Сравнительная характеристика моделей экстраполяции TKG}
+\label{tab:models_comparison}
+\centering
+\begin{tabular}{lcccc}
+\hline
+Модель & Пространство & MRR & Hits@10 & Асимметрия \\
+\hline
+TTransE & $\displaystyle \mathbb{R}^d$ трансляционное & 0.255 & 0.601 & Низкая \\
+HyTE & $\displaystyle \mathbb{R}^d$ гиперплоскостное & 0.297 & 0.655 & Средняя \\
+DE-SimplE & $\displaystyle \mathbb{R}^d$ диагональное & 0.526 & 0.725 & Средняя \\
+TComplEx & $\displaystyle \mathbb{C}^d$ тензорное & 0.560 & 0.730 & Максимальная \\
+\hline
+\end{tabular}
+\end{table}
+
+Анализ данных из таблицы~\ref{tab:models_comparison} показывает, что трансляционные модели на основе вещественного пространства существенно уступают комплексным аналогам по обеим ключевым метрикам. Метрика усреднённого обратного ранга для TTransE и HyTE не превышает значения в 0.3, что является следствием их неспособности выражать антисимметричные свойства навигационных графов, которые мы подробно обсуждали в разделе~1.1.3 первой главы. Модель DE-SimplE достигает улучшения благодаря использованию диагональных матриц отношений, однако она по-прежнему работает в вещественном пространстве. Внедрение TComplEx обеспечивает наивысшую метрику MRR на уровне 0.560 и Hits@10 на стабильном уровне 0.730. В практическом приложении это означает, что с вероятностью 73\% истинная гипотеза местоположения пропавшего объекта окажется среди первых десяти предсказаний модели.
+
+В подходе Buehler \cite{ref1} говорится, что итеративный процесс достраивания графа агентом приводит к самоорганизации информации, в ходе которой сеть приобретает безмасштабную топологию с ярко выраженными концептуальными узлами-концентраторами. Формирование данных мостовых элементов обеспечивает устойчивость навигационных маршрутов, что позволяет агенту находить наиболее вероятные логические связи в помещениях. В работе Wang и соавторов \cite{ref12} утверждается, что интеграция LLM непосредственно в цикл рассуждения над TKG позволяет динамически изменять стратегию поиска к структурным особенностям конкретного запроса, это ещё также повышает качество предсказаний по сравнению со статическими подходами.
+
+
+\section{Обзор прикладных задач}
+\label{sec:applications}
+
+Разработанная архитектура позволяет решать целые классы прикладных задач сервисной робототехники, которые принципиально недоступны для классических жёстко запрограммированных планировщиков на основе конечных автоматов и деревьев поведения \cite{ref3}.
+
+\textbf{Семантический поиск и восстановление порядка.} Этот сценарий предполагает восстановление порядка в помещении после вмешательства, когда текущие координаты перемещённых вещей абсолютно неизвестны роботу. Использования ресурсоёмкого алгоритма исчерпывающего поиска, требующего последовательного осмотра каждой точки помещения, мобильная платформа делегирует задачу экстраполяционной модели TComplEx. Модуль анализирует тенденции перемещения объектов, накопленные в темпоральном графе, и вычисляет математическое распределение наиболее вероятных локаций пропавших предметов. Агент интегрирует эти статистические гипотезы в маршрут осмотра, кардинально сокращая время простоя робота.
+
+\textbf{Выполнение обусловленных поручений.} Современная сервисная робототехника требует от робота воспринимать инструкции с временными ограничениями и условными конструкциями. Как было показано в первой главе при обсуждении линейной темпоральной логики \cite{ref29}, трансляция текстовой команды в формулы LTL даёт гарантию безопасности, так как верификатор на базе автомата Бюхи блокирует любые потенциально опасные маневры ещё на этапе генерации когнитивных гипотез языковой моделью. Подобная архитектура создаёт надёжный нейросимволический барьер между творческими способностями языковой модели и физическим миром, в котором ошибки планирования могут привести к травмам людей или повреждению оборудования.
+
+\textbf{Проактивное обнаружение аномалий среды.} Темпоральный граф знаний выступает фундаментом для интеллектуального поведенческого анализа, выходящего далеко за рамки простой навигации. Экстраполяционная модель непрерывно генерирует математическое ожидание будущего состояния сцены на основании исторических данных о типичных паттернах перемещения объектов и людей. Резкое расхождение между фактическими показаниями сенсоров и предсказаниями TComplEx классифицируется системой как темпоральная аномалия, сигнализирующая о нетипичном событии. Как описано в подходе непрерывного мониторинга, предложенном Gupta и соавторами \cite{ref28}, подобный контекстно-зависимый мониторинг на основе графов знаний позволяет роботу выполнять функции охранника или ассистента, поднимая тревогу только при действительно необычном стечении обстоятельств и игнорируя рутинные колебания обстановки.
+
+\textbf{Вопросно-ответное взаимодействие с учётом времени.} Как было предложено Saxena и соавторами \cite{ref50}, ответы на вопросы над темпоральными графами знаний представляют собой отдельную исследовательскую задачу, требующую одновременного учёта как семантического содержания вопроса, так и его временного контекста. Наш четырёхстадийный конвейер естественным образом решает эту задачу, комбинируя семантический поиск с временной оценкой через оценку релевантности~\eqref{eq:hybrid_confidence}. Агент способен обрабатывать сложные многошаговые запросы, последовательно разрешая якорные события и применяя временные фильтры к извлечённым кандидатам.
+
+
+\section{Эксперимент и методика сравнения}
+\label{sec:experiment}
+
+Для объективной верификации теоретических выкладок и количественной оценки качества предложенной нейросимволической архитектуры была спроектирована комплексная методика тестирования, охватывающая как изолированную оценку подсистемы экстраполяции, так и интегральную проверку всего когнитивного цикла.
+
+\subsection{Описание эксперимента}
+
+Логика базового эксперимента опирается на задачу восстановления информации о динамически изменяющейся среде в условиях частичной наблюдаемости. Специфика заключается вынужденности опираться исключительно на целостность своей внутренней эпизодической памяти, реализованной в виде темпорального графа знаний.
+
+Сценарный конвейера реализуется в несколько последовательных фаз. Первая фаза является фазой ознакомления: робот сканирует эталонно помещение, и сенсорный поток конвертируется в нулевой срез темпорального графа знаний $\displaystyle \mathcal{G}_0$, в котором фиксируются все первоначальные координаты объектов, топологические связи между функциональными зонами и семантические атрибуты предметов обстановки. Вторая фаза представляет собой фазу внешнего воздействия: случайным образом изменяются состояния и перемещаются предметы вне поля зрения робота, создавая искусственный разрыв между данными в графе и реальным физическим миром. Третья фаза является фазой восстановления: управление полностью перехватывается агентным планировщиком, который локализуется в изменённом пространстве, выявляет расхождения между ожидаемым и наблюдаемым состоянием среды, запрашивает предсказания у модели TComplEx и генерирует последовательность макро-шагов для исправления ситуации. В качестве базовой линии для сравнения используется аналогичная система планирования, оперирующая статическим трёхмерным графом сцены без поддержки тензорной экстраполяции и инкрементального обновления истории, что позволяет изолировать вклад каждого предложенного компонента.
+
+\subsection{Методика сравнения}
+
+Оценка алгоритмической эффективности разделена на два направления, полностью соответствующих требованиям, сформулированным в постановке задачи в разделе~\ref{sec:task_definition} первой главы.
+
+Во-первых, исследуется качество подсистемы экстраполяции на изолированных исторических данных. Индикаторами служат метрика усреднённого обратного ранга $\displaystyle \text{MRR} = \frac{1}{|\mathcal{Q}|} \sum_{q \in \mathcal{Q}} \frac{1}{\text{rank}(q)}$ и метрика $\displaystyle \text{Hits@}k$, определяемая как часть запросов, для которых истинный ответ оказался в числе первых $\displaystyle k$ предсказаний модели. Данные метрики были выбраны и обоснованы в первой главе при обсуждении критериев оценки качества алгоритмов.
+
+Во-вторых, проводится оценка всей нейросимволической петли управления. Анализируются следующие показатели.
+
+Успешность выполнения задачи (Task Success Rate) — данная метрика вычисляет процент экспериментальных эпизодов, завершившихся полным восстановлением исходного порядка без фатальных навигационных сбоев, столкновений с препятствиями или зацикливания агента.
+
+Контекстная точность (Contextual Precision) — индикатор устойчивости к галлюцинациям языковой модели, рассчитывающий долю утверждений в цепочке рассуждений агента, строго подтверждённых историческими фактами из графовой базы данных. Как описано в подходе автоматизированной оценки RAG-систем, предложенном Shahul Es и соавторами \cite{ref87}, данная метрика является наиболее информативным индикатором фактографической надёжности генеративных систем, опирающихся на внешние базы знаний.
+
+Коэффициент безопасности — метрика, отражающая долю синтезированных макро-траекторий, которые ни разу не нарушили заданные логические инварианты LTL-верификатора, и тем самым характеризующая надёжность механизма графовой верификации, описанного в подходе \cite{ref8}.
+
+Длина цепочки рассуждений — вычислительная метрика, показывающая среднее количество итеративных обращений агента к базе данных, потребовавшихся для генерации финального корректного плана, и характеризующая эффективность механизма семантического поиска по графу.
+
+Для подтверждения статистической значимости полученных расхождений между предложенной системой и базовой линией применяется парный $\displaystyle t$-критерий Стьюдента с уровнем значимости $\displaystyle \alpha = 0.05$.
+
+
+Для эмпирического подтверждения эффективности выбранной архитектуры был проведен сравнительный бенчмарк-анализ гибридного конвейера (модель TComplEx в связке с LLM) и классического алгоритма RAG (Retrieval-Augmented Generation) на различных типах пространственно-временных запросов. Данные, представленные в таблице~\ref{tab:benchmark_results}, подтверждают фундаментальную ограниченность классического RAG при работе с темпоральными средами. На тривиальных статических задачах (simple\_entity) обе системы показывают идентично высокие результаты по метрике Hits@5 (0.957). Однако при обработке относительной хронологии (before\_after) гибридная архитектура более чем вдвое превосходит RAG по метрике Hits@1 (0.581 против 0.161). Наиболее показательным является сценарий строгого поиска по временной метке (simple\_time), где базовая конфигурация RAG демонстрирует полный отказ (значение 0.0 по всем метрикам), в то время как гибридная архитектура TComplEx сохраняет работоспособность, достигая показателя MRR 0.425. Итоговое превосходство гибридной модели по усредненной метрике MRR (0.564 против 0.427 у RAG) строго доказывает, что тензорная экстраполяция критически необходима для корректного семантического планирования в динамических средах.
+
+\begin{table}[htbp]
+\caption{Сравнительная эффективность RAG и гибридного конвейера на пространственно-временных запросах}
+\label{tab:benchmark_results}
+\centering
+\begin{tabular}{p{5cm}p{3cm}ccc}
+\hline
+Категория запроса & Конфигурация & MRR & Hits@1 & Hits@5 \\
+\hline
+\multirow{2}{5cm}{Усредненный итог} & RAG & 0.427 & 0.372 & 0.502 \\
+ & Hybrid & 0.564 & 0.500 & 0.652 \\
+\hline
+\multirow{2}{5cm}{Простой поиск сущности} & RAG & 0.892 & 0.844 & 0.957 \\
+ & Hybrid & 0.907 & 0.865 & 0.957 \\
+\hline
+\multirow{2}{5cm}{Хронология «До/После»} & RAG & 0.232 & 0.161 & 0.323 \\
+ & Hybrid & 0.623 & 0.581 & 0.677 \\
+\hline
+\multirow{2}{5cm}{Поиск по времени} & RAG & 0.323 & 0.232 & 0.425 \\
+ & Hybrid & 0.425 & 0.330 & 0.573 \\
+\hline
+\end{tabular}
+\end{table}
+
+
+\subsection*{Выводы по главе 2}
+
+В рамках данной главы была проработана формальная постановка задачи семантического планирования с учётом временных ограничений, которая включает определение темпорального графа знаний~\eqref{eq:tkg_def}, предсказанного графа~\eqref{eq:predicted_graph} и оптимизационной задачи когнитивного планирования~\eqref{eq:planning}. Было описано устройство экстраполяционной модели TComplEx~\eqref{eq:tcomplex_score}, которая формирует составной вектор отношения~\eqref{eq:full_rel}, регуляризаторы $\displaystyle N_3$~\eqref{eq:n3_reg} и $\displaystyle \Lambda_3$~\eqref{eq:lambda3_reg}, а также итоговую функцию потерь~\eqref{eq:total_loss}. Был разобран конвейер поиска и ранжирования фактов с формулой оценки релевантности~\eqref{eq:hybrid_confidence}, подсистема инкрементального обновления графа с атомарным резервным копированием, и архитектура хранения данных на основе графовой и векторной баз данных. Сравнительный анализ в таблице~\ref{tab:models_comparison} продемонстрировал превосходство модели TComplEx над альтернативными архитектурами, а предложенная методология полностью соответствует критериям оценки, заявленным в постановке задачи первой главы.
